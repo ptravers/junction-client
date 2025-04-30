@@ -1,5 +1,10 @@
 [package]
-name = "lib"
+name = "junction-go"
+version = "0.1.0"
+edition = "2021"
+description = """
+Dynamically configurable HTTP service discovery bindings for Go
+"""
 version.workspace = true
 edition.workspace = true
 homepage.workspace = true
@@ -7,4 +12,17 @@ repository.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[lib]
+name = "junction"
+crate-type = ["cdylib"]
+
 [dependencies]
+http = { workspace = true }
+junction-core = { workspace = true }
+junction-api = { workspace = true, features = ["kube_v1_29", "xds"] }
+once_cell = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yml = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+xds-api = { workspace = true, features = ["pbjson"] }
