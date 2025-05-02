@@ -11,7 +11,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [lib]
-name = "junction"
+name = "junction_go"
 crate-type = ["cdylib"]
 
 [dependencies]

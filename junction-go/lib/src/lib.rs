@@ -9,7 +9,7 @@ use http::HeaderMap;
 use junction_core::Url;
 use once_cell::sync::Lazy;
 
-pub type Callback = extern "C" fn(*const c_int, *const c_char);
+pub type Callback = extern "C" fn(c_int, *const c_char, *const c_char);
 
 pub struct Junction {
     client: junction_core::Client,
@@ -72,6 +72,7 @@ pub extern "C" fn resolve_http(
     url: *const c_char,
     method: *const c_char,
     _headers: *const c_char,
+    id: *const c_char,
     callback: Callback,
 ) -> u8 {
     if junction.is_null() {
@@ -111,7 +112,6 @@ pub extern "C" fn resolve_http(
     };
 
     RUNTIME.spawn(async move {
-        let callback = callback.to_owned();
         match junction
             .client
             .resolve_http(&method, &url, &HeaderMap::new())
@@ -119,12 +119,30 @@ pub extern "C" fn resolve_http(
         {
             Ok(endpoint) => {
                 let result: String = format!("{}:{}", endpoint.addr().ip(), endpoint.addr().port());
-                callback(0 as *const c_int, result.as_str().as_ptr() as *const c_char)
+                if let Ok(c_result) = std::ffi::CString::new(result) {
+                    callback(0, id, c_result.as_ptr());
+                } else {
+                    let err_msg = "Error: Resolved endpoint string contained null bytes";
+                    if let Ok(c_err_msg) = std::ffi::CString::new(err_msg) {
+                        callback(1, id, c_err_msg.as_ptr());
+                    } else {
+                        callback(1, id, std::ptr::null());
+                    }
+                }
             }
-            Err(e) => callback(
-                1 as *const c_int,
-                format!("{:?}", e).as_str().as_ptr() as *const c_char,
-            ),
+            Err(e) => {
+                let error_str = format!("Resolve error: {:?}", e);
+                if let Ok(c_error) = std::ffi::CString::new(error_str) {
+                    callback(1, id, c_error.as_ptr());
+                } else {
+                    let err_msg = "Error: Resolve error message contained null bytes";
+                    if let Ok(c_err_msg) = std::ffi::CString::new(err_msg) {
+                        callback(1, id, c_err_msg.as_ptr());
+                    } else {
+                        callback(1, id, std::ptr::null());
+                    }
+                }
+            }
         }
     });
 

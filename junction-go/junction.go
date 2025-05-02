@@ -1,13 +1,23 @@
 package main
 
 /*
-#cgo LDFLAGS: -L. -l
+#cgo LDFLAGS: -L. -llibjunction_go
+typedef void* JunctionHandle;
+
+extern void callback(int status, const char* result_or_error_msg);
 */
 import "C"
 import "unsafe"
 import "encoding/json"
 import "sync"
 
+// Global map to store channels for pending callbacks
+// Key: callback ID (uintptr), Value: chan callbackResult
+var (
+	callbackMap sync.Map
+	// Atomic counter for generating unique callback IDs
+	nextCallbackID atomic.Uintptr
+)
 
 struct Client {
 	core interface{}
@@ -15,11 +25,11 @@ struct Client {
 }
 
 //export callback
-func (*Client) callback(resolvedRoute C.CString) {
+func (*Client) callback(status C.int, resolvedRouteOrError C.CString) {
 	
 }
 
-func (*Client) ResolveRoute(url string, method string, headers map[string]string, timeout int) ([]string, error) {
+func (*Client) ResolveRoute(url string, method string, headers map[string]string) ([]string, error) {
 	callbackChan := make(chan []string)
 
 	url := C.CString(url)
@@ -32,15 +42,13 @@ func (*Client) ResolveRoute(url string, method string, headers map[string]string
 	}
 	headers := C.CString(string(headersJson))
 	defer C.free(unsafe.Pointer(headers))
-	timeout := C.int(timeout)
-	defer C.free(unsafe.Pointer(timeout))
 
 	callback := C.callback_t(C.callback)
 	defer C.free(unsafe.Pointer(callback))
 	
 	C.resolve_route(url, method, headers, timeout, id, callback)
 
-	ips := <-callbackChan
+	ip := <-callbackChan
 
-	return ips, nil
+	return ip, nil
 }
