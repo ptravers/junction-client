@@ -1,5 +1,8 @@
 package main
 
+/*
+#cgo LDFLAGS: -L. -l
+*/
 import "C"
 import "unsafe"
 import "encoding/json"

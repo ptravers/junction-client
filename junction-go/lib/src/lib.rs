@@ -1,3 +1,4 @@
+use core::panic;
 use std::{
     ffi::CStr,
     os::raw::{c_char, c_int},
@@ -5,10 +6,10 @@ use std::{
 };
 
 use http::HeaderMap;
-use junction_api::http::Method;
-use junction_core::{ResolvedRoute, Url};
+use junction_core::Url;
+use once_cell::sync::Lazy;
 
-pub type Callback = extern "C" fn(*const c_char, *const c_int, *const c_char);
+pub type Callback = extern "C" fn(*const c_int, *const c_char);
 
 pub struct Junction {
     client: junction_core::Client,
@@ -24,21 +25,12 @@ static RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
     rt
 });
 
-static DEFAULT_CLIENT: Lazy<Result<junction_core::Client>> = Lazy::new(|| {
-    let ads = env::ads_server(
-        None,
-        "JUNCTION_ADS_SERVER isn't set, can't use the default client",
-    )?;
-    let (node, cluster) = (env::node_info(None), env::cluster_name(None));
-    new_client(ads, node, cluster)
-});
-
 fn new_client(
     ads_address: String,
     node_name: String,
     cluster_name: String,
-) -> junction_core::Client {
-    runtime::block_and_check_signals(async {
+) -> Result<junction_core::Client, String> {
+    RUNTIME.block_on(async {
         junction_core::Client::build(ads_address, node_name, cluster_name)
             .await
             .map_err(|e| match e.source() {
@@ -51,19 +43,25 @@ fn new_client(
 #[no_mangle]
 pub extern "C" fn default_client(
     static_routes: *const c_char,
-    static_backends: *const c_char,
+    _static_backends: *const c_char,
 ) -> *mut Junction {
-    let routes = unsafe {
-        if (static_routes.is_null()) {
+    let _routes = unsafe {
+        if static_routes.is_null() {
             None
         } else {
             Some(CStr::from_ptr(static_routes).to_string_lossy().into_owned())
         }
     };
 
-    let junction = Box::new(Junction {
-        client: DEFAULT_CLIENT,
-    });
+    let Ok(client) = new_client(
+        "0.0.0.0".to_string(),
+        "wow".to_string(),
+        "clustermesurprised".to_string(),
+    ) else {
+        panic!("oh noes!")
+    };
+
+    let junction = Box::new(Junction { client });
 
     return Box::into_raw(junction);
 }
@@ -73,7 +71,7 @@ pub extern "C" fn resolve_http(
     junction: *mut Junction,
     url: *const c_char,
     method: *const c_char,
-    headers: *const c_char,
+    _headers: *const c_char,
     callback: Callback,
 ) -> u8 {
     if junction.is_null() {
@@ -82,7 +80,7 @@ pub extern "C" fn resolve_http(
 
     let junction = unsafe { &*junction };
 
-    let url: Url = unsafe {
+    let url = unsafe {
         if url.is_null() {
             return 2;
         }
@@ -90,26 +88,45 @@ pub extern "C" fn resolve_http(
             return 2;
         };
 
-        Url::from_str(url_str)
+        let Ok(url) = Url::from_str(url_str) else {
+            return 2;
+        };
+
+        url
     };
 
     let method = unsafe {
         if method.is_null() {
-            return 2;
+            return 3;
         }
         let Ok(method_str) = CStr::from_ptr(method).to_str() else {
-            return 2;
+            return 3;
         };
 
-        Method::from_str(method_str)
+        let Ok(method) = http::Method::from_str(method_str) else {
+            return 3;
+        };
+
+        method
     };
 
-    RUNTIME.spawn(
-        junction
+    RUNTIME.spawn(async move {
+        let callback = callback.to_owned();
+        match junction
             .client
             .resolve_http(&method, &url, &HeaderMap::new())
-            .map(|rr: ResolvedRoute| callback(rr.route, rr.rule, rr.backend)),
-    );
+            .await
+        {
+            Ok(endpoint) => {
+                let result: String = format!("{}:{}", endpoint.addr().ip(), endpoint.addr().port());
+                callback(0 as *const c_int, result.as_str().as_ptr() as *const c_char)
+            }
+            Err(e) => callback(
+                1 as *const c_int,
+                format!("{:?}", e).as_str().as_ptr() as *const c_char,
+            ),
+        }
+    });
 
     return 0;
 }
