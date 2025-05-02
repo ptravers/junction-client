@@ -109,6 +109,7 @@ func NewClient(staticRoutesJSON, staticBackendsJSON string) (*Client, error) {
 	}, nil
 }
 
+
 func (c *Client) Destroy() {
 	c.destroyOnce.Do(func() {
 		if c.core != nil {
@@ -118,7 +119,7 @@ func (c *Client) Destroy() {
 	})
 }
 
-func (c *Client) ResolveRoute(url string, method string, headers map[string]string, timeoutMillis int) (string, error) {
+func (c *Client) ResolveHttp(url string, method string, headers map[string]string, timeoutMillis int) (string, error) {
 	if c.core == nil {
 		return "", errors.New("client core is not initialized or already destroyed")
 	}
