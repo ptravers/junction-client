@@ -1,9 +1,12 @@
 use std::{
     ffi::CStr,
     os::raw::{c_char, c_int},
+    str::FromStr,
 };
 
-use junction_core::ResolvedRoute;
+use http::HeaderMap;
+use junction_api::http::Method;
+use junction_core::{ResolvedRoute, Url};
 
 pub type Callback = extern "C" fn(*const c_char, *const c_int, *const c_char);
 
@@ -66,12 +69,11 @@ pub extern "C" fn default_client(
 }
 
 #[no_mangle]
-pub extern "C" fn resolve_route(
+pub extern "C" fn resolve_http(
     junction: *mut Junction,
     url: *const c_char,
     method: *const c_char,
     headers: *const c_char,
-    timeout: c_int,
     callback: Callback,
 ) -> u8 {
     if junction.is_null() {
@@ -80,14 +82,32 @@ pub extern "C" fn resolve_route(
 
     let junction = unsafe { &*junction };
 
-    let Ok(request) = junction::core::from_parts() else {
-        return 2;
+    let url: Url = unsafe {
+        if url.is_null() {
+            return 2;
+        }
+        let Ok(url_str) = CStr::from_ptr(url).to_str() else {
+            return 2;
+        };
+
+        Url::from_str(url_str)
+    };
+
+    let method = unsafe {
+        if method.is_null() {
+            return 2;
+        }
+        let Ok(method_str) = CStr::from_ptr(method).to_str() else {
+            return 2;
+        };
+
+        Method::from_str(method_str)
     };
 
     RUNTIME.spawn(
         junction
             .client
-            .resolve_http(request, deadline)
+            .resolve_http(&method, &url, &HeaderMap::new())
             .map(|rr: ResolvedRoute| callback(rr.route, rr.rule, rr.backend)),
     );
 
